@@ -391,65 +391,26 @@ async def unban_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⚠️ এই গ্রুপ ban list এ নেই。")
 
-# ================= MESSAGE CHECK (Fully Robust) =================
-ZERO_WIDTH_CHARS = [
-    "\u200B",  # Zero-width space
-    "\u200C",  # Zero-width non-joiner
-    "\u200D",  # Zero-width joiner
-    "\uFEFF"   # Zero-width no-break space (BOM)
-]
-
-def remove_invisible_chars(text):
-    """Remove all zero-width / invisible characters"""
-    for char in ZERO_WIDTH_CHARS:
-        text = text.replace(char, "")
-    return text
-
-def normalize_message(text):
-    """Lowercase + remove invisible chars + remove placeholders + remove HTML tags + normalize whitespace"""
-    if not text:
-        return ""
-    text = text.lower()
-    text = remove_invisible_chars(text)
-    # remove {{...}} placeholders
-    text = re.sub(r"\{\{.*?\}\}", "", text)
-    # remove HTML tags like <br>, <b>, <i>
-    text = re.sub(r"<.*?>", "", text)
-    # collapse multiple whitespaces into one
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
+# ================= MESSAGE CHECK =================
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
-    
     if chat_id in banned_groups:
         return
-
     group = get_group(chat_id)
     if not group.get("bot_active", False):
         return
-
-    msg_text = ""
-    if update.message.text:
-        msg_text += update.message.text
-    if update.message.caption:  # for photo/video with caption
-        msg_text += " " + update.message.caption
-    msg_text = normalize_message(msg_text)
-
-    if not msg_text:
-        return  # nothing to check
-
+    msg_text = update.message.text.lower()
     for kw in group.get("keywords", []):
-        clean_kw = normalize_message(kw)
-        if clean_kw in msg_text:
+        if kw in msg_text:
             await asyncio.sleep(group.get("bot_delay", 5))
             try:
                 await update.message.delete()
-                group["deleted_count"] += 1
-                save_data()
+                group["deleted_count"] += 1  # ✅ delete হলে counter বাড়ানো
+                save_data()  # ✅ পরিবর্তন save করা হচ্ছে
             except:
-                pass
+                pass  # Ignore delete errors
             break
+
 
 
 # ================= LEAVE / START GROUP =================
@@ -833,6 +794,7 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
