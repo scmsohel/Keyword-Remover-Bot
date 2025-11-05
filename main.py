@@ -565,7 +565,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start_group - Restart bot in the group"
     ]
 
-    help_text = "✅ Available commands (excluding bot owner commands):\n\n" + "\n".join(commands_list)
+    help_text = "✅ Available commands:\n\n" + "\n".join(commands_list)
     await update.message.reply_text(help_text)
 
 # ================= HELP OWNER COMMAND =================
@@ -793,6 +793,7 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
