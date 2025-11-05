@@ -275,16 +275,21 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat_id in banned_groups:
             return await update.message.reply_text("❌ এই গ্রুপটি banned, কোনো command চলবে না।")
         if not await is_admin(update, context):
-            return await update.message.reply_text("❌ এই কমান্ডটি শুধুমাত্র গ্রুপের অ্যাডমিনদের জন্য。")
+            return await update.message.reply_text("❌ এই কমান্ডটি শুধুমাত্র গ্রুপের অ্যাডমিনদের জন্য।")
         group = get_group(update.effective_chat.id)
         keywords_count = len(group.get("keywords", []))
+        deleted_count = group.get("deleted_count", 0)  # ✅ এখানে counter নেওয়া হলো
         await update.message.reply_text(
             f"Bot: {'On' if group.get('bot_active', False) else 'Off'}\n"
             f"Delay sec: {group.get('bot_delay', 5)}\n"
-            f"Keywords: {keywords_count}"
+            f"Keywords: {keywords_count}\n"
+            f"Deleted messages: {deleted_count}"  # ✅ নতুন line
         )
     except Exception as e:
         print(f"Error in status_cmd: {e}")
+
+    )
+
 
 # ================= STATES =================
 ADD_KEYWORD, REMOVE_KEYWORD, SET_DELAY = range(3)
@@ -293,7 +298,12 @@ ADD_KEYWORD, REMOVE_KEYWORD, SET_DELAY = range(3)
 def get_group(chat_id):
     chat_id = str(chat_id)
     if chat_id not in data:
-        data[chat_id] = {"keywords": [], "bot_active": False, "bot_delay": 5}
+        data[chat_id] = {
+            "keywords": [],
+            "bot_active": False,
+            "bot_delay": 5,
+            "deleted_count": 0  # ✅ নতুন: এই গ্রুপে কত মেসেজ delete হয়েছে track করবে
+        }
         save_data()
     group = data[chat_id]
     if "keywords" not in group:
@@ -302,7 +312,11 @@ def get_group(chat_id):
         group["bot_active"] = False
     if "bot_delay" not in group:
         group["bot_delay"] = 5
+    if "deleted_count" not in group:
+        group["deleted_count"] = 0  # ✅ safeguard, কোনো আগের data missing হলে
     return group
+
+
 
 # ================= ORIGINAL COMMANDS =================
 async def add_keyword_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -381,9 +395,13 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(group.get("bot_delay", 5))
             try:
                 await update.message.delete()
+                group["deleted_count"] += 1  # ✅ delete হলে counter বাড়ানো
+                save_data()  # ✅ পরিবর্তন save করা হচ্ছে
             except:
                 pass  # Ignore delete errors
             break
+
+
 
 # ================= LEAVE / START GROUP =================
 async def leave_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -459,7 +477,8 @@ async def list_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Groups:\n"
     for gid in data:
         info = get_group(gid)
-        text += f"{gid} | Bot: {'On' if info.get('bot_active', False) else 'Off'} | Delay: {info.get('bot_delay', 5)}s | Keywords: {len(info.get('keywords', []))}\n"
+        deleted_count = info.get("deleted_count", 0)  # ✅ Added deleted message count
+        text += f"{gid} | Bot: {'On' if info.get('bot_active', False) else 'Off'} | Delay: {info.get('bot_delay', 5)}s | Keywords: {len(info.get('keywords', []))} | Deleted: {deleted_count}\n"
     for gid in banned_groups:
         text += f"{gid} | 🚫 BANNED\n"
     await update.message.reply_text(text)
@@ -562,12 +581,14 @@ async def group_info_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keywords = info.get("keywords", [])
         keyword_count = len(keywords)
         keyword_text = f"{keyword_count} keyword{'s' if keyword_count != 1 else ''}"
+        deleted_count = info.get("deleted_count", 0)  # ✅ ADD THIS LINE
 
         info_text = (
             f"📊 Group ID: {gid}\n"
             f"🤖 Bot: {status}\n"
             f"⏱ Delay: {delay} sec\n"
-            f"📝 Keywords: {keyword_text}"
+            f"📝 Keywords: {keyword_text}\n"        # ✅ Keywords info
+            f"🗑 Deleted messages: {deleted_count}"  # ✅ Deleted messages info added here
         )
 
         kb = [
@@ -708,4 +729,5 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
