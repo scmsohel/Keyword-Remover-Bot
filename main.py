@@ -390,8 +390,10 @@ async def unban_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⚠️ এই গ্রুপ ban list এ নেই。")
 
-# ================= MESSAGE CHECK (Invisible-safe) =================
+# ================= MESSAGE CHECK (Enhanced Invisible-safe + Template-safe) =================
 # এই ফাংশন এখন zero-width / invisible characters detect করতে পারবে
+# এবং IFTTT / Telegram notification style message detect ও delete করতে পারবে
+
 ZERO_WIDTH_CHARS = [
     "\u200B",  # Zero-width space
     "\u200C",  # Zero-width non-joiner
@@ -400,35 +402,52 @@ ZERO_WIDTH_CHARS = [
 ]
 
 def remove_invisible_chars(text):
-    """Remove all zero-width/invisible characters from text"""
+    """Remove all zero-width / invisible characters from text"""
     for char in ZERO_WIDTH_CHARS:
         text = text.replace(char, "")
     return text
 
+def normalize_message(text):
+    """Lowercase + remove invisible chars + remove template braces"""
+    if not text:
+        return ""
+    text = text.lower()
+    text = remove_invisible_chars(text)
+    # 🔹 Remove common template placeholders (like {{Something}})
+    import re
+    text = re.sub(r"\{\{.*?\}\}", "", text)
+    return text.strip()
+
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
+    
+    # 🔹 Step 1: banned group ignore
     if chat_id in banned_groups:
-        return  # banned group ignore
+        return
 
+    # 🔹 Step 2: bot off হলে ignore
     group = get_group(chat_id)
     if not group.get("bot_active", False):
-        return  # bot off হলে ignore
+        return
 
-    # message normalize: lowercase + invisible chars remove
-    msg_text = remove_invisible_chars(update.message.text.lower())
+    # 🔹 Step 3: message text normalize
+    msg_text = normalize_message(update.message.text if update.message.text else "")
 
+    if not msg_text:
+        return  # empty after normalization
+
+    # 🔹 Step 4: check against each keyword
     for kw in group.get("keywords", []):
-        clean_kw = remove_invisible_chars(kw.lower())  # keyword clean করা
-        if clean_kw in msg_text:  # match হলে
+        clean_kw = normalize_message(kw)
+        if clean_kw in msg_text:
             await asyncio.sleep(group.get("bot_delay", 5))  # delay
             try:
-                await update.message.delete()  # মেসেজ delete
-                group["deleted_count"] += 1   # counter update
-                save_data()                  # save change
+                await update.message.delete()                # delete message
+                group["deleted_count"] += 1                 # update counter
+                save_data()                                 # save changes
             except:
-                pass  # delete error ignore
+                pass  # ignore delete errors
             break  # একবার match হলে break
-
 
 
 # ================= LEAVE / START GROUP =================
@@ -812,6 +831,7 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
