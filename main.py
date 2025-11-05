@@ -14,9 +14,24 @@ from telegram.ext import (
 import json
 import asyncio
 import os
+from fastapi import FastAPI, Request
+import uvicorn
+import logging
 
-# ================= CONFIG =================
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # Render environment variable
+# Logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Render Environment Variables থেকে data load
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Render Environment Variable
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Render Environment Variable
+
+# Validate environment variables
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN environment variable সেট করা হয়নি!")
+if not WEBHOOK_URL:
+    raise ValueError("❌ WEBHOOK_URL environment variable সেট করা হয়নি!")
+
 ADMINS = [5993295933]  # bot owner
 DATA_FILE = "keywords.json"
 BAN_FILE = "ban.json"
@@ -26,29 +41,19 @@ CHANNEL_ID = "@nextgentech_bd"  # আপনার চ্যানেল
 CHANNEL_LINK = "https://t.me/nextgentech_bd"
 
 # ================= JSON INIT =================
-def init_files():
-    """Initialize JSON files if they don't exist"""
-    if not os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "w") as f:
-            json.dump({}, f)
-    
-    if not os.path.exists(BAN_FILE):
-        with open(BAN_FILE, "w") as f:
-            json.dump([], f)
-
-# Initialize files
-init_files()
-
 try:
     with open(DATA_FILE) as f:
         data = json.load(f)
 except:
     data = {}
 
-try:
-    with open(BAN_FILE) as f:
-        banned_groups = json.load(f)
-except:
+if os.path.exists(BAN_FILE):
+    try:
+        with open(BAN_FILE) as f:
+            banned_groups = json.load(f)
+    except:
+        banned_groups = []
+else:
     banned_groups = []
 
 
@@ -61,6 +66,12 @@ def save_ban():
     with open(BAN_FILE, "w") as f:
         json.dump(banned_groups, f)
 
+# ================= FASTAPI APP =================
+app = FastAPI(title="Telegram Keyword Bot", description="FastAPI + Webhook Bot")
+
+# ================= TELEGRAM BOT SETUP =================
+telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+
 # ================= FORCE JOIN HELPERS =================
 async def is_member(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """চেক করে ইউজার চ্যানেলের member কিনা"""
@@ -71,11 +82,14 @@ async def is_member(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
         print(f"Error checking membership: {e}")
         return False
 
+
 def join_verify_keyboard():
     """জয়েন এবং ভেরিফাই এর কী-বোর্ড"""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton('📢 আমাদের চ্যানেলে জয়েন করুন', url=CHANNEL_LINK)],
-        [InlineKeyboardButton('✅ ভেরিফাই করুন', callback_data='verify_membership')]
+        [InlineKeyboardButton(
+            '📢 আমাদের চ্যানেলে জয়েন করুন', url=CHANNEL_LINK)],
+        [InlineKeyboardButton(
+            '✅ ভেরিফাই করুন', callback_data='verify_membership')]
     ])
 
 # ================= MODIFIED START COMMAND =================
@@ -106,16 +120,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🤖 Keyword Remover Bot এ আপনাকে স্বাগতম!
 
 এই বটটি আপনার গ্রুপে স্বয়ংক্রিয়ভাবে স্প্যাম মেসেজ ডিলিট করে।
-
-*কমান্ডস:*
-/add - নতুন keyword যোগ করুন
-/remove - keyword মুছুন  
-/list - keywords দেখুন
-/start_bot - বট চালু করুন
-/stop_bot - বট বন্ধ করুন
-/status - বট স্ট্যাটাস দেখুন
-
-গ্রুপে অ্যাডমিন হয়ে এই কমান্ডগুলো ব্যবহার করুন।
 """
     await update.message.reply_text(welcome_text)
 
@@ -124,10 +128,10 @@ async def verify_membership_callback(update: Update, context: ContextTypes.DEFAU
     """ভেরিফাই মেম্বারশিপ কলব্যাক"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = query.from_user.id
     user_name = query.from_user.first_name
-    
+
     if await is_member(user_id, context):
         await query.edit_message_text(
             f"✅ ধন্যবাদ {user_name}!\n\n"
@@ -147,15 +151,15 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fixed admin check with error handling"""
     user_id = update.effective_user.id
     chat = update.effective_chat
-    
+
     # Bot owner always admin
     if user_id in ADMINS:
         return True
-    
+
     # Private chat - no admin check needed
     if chat.type == "private":
         return False
-    
+
     # Group/supergroup - check if user is admin
     try:
         member = await context.bot.get_chat_member(chat.id, user_id)
@@ -164,25 +168,7 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Admin check error: {e}")
         return False
 
-# ================= STATES =================
-ADD_KEYWORD, REMOVE_KEYWORD, SET_DELAY = range(3)
-
-# ================= HELPERS =================
-def get_group(chat_id):
-    chat_id = str(chat_id)
-    if chat_id not in data:
-        data[chat_id] = {"keywords": [], "bot_active": False, "bot_delay": 5}
-        save_data()
-    group = data[chat_id]
-    if "keywords" not in group:
-        group["keywords"] = []
-    if "bot_active" not in group:
-        group["bot_active"] = False
-    if "bot_delay" not in group:
-        group["bot_delay"] = 5
-    return group
-
-# ================= COMMANDS WITH ERROR HANDLING =================
+# ================= FIXED COMMANDS WITH ERROR HANDLING =================
 async def start_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fixed add command with error handling"""
     try:
@@ -197,16 +183,6 @@ async def start_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in start_add: {e}")
         return ConversationHandler.END
 
-async def add_keyword_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    group = get_group(update.effective_chat.id)
-    keyword = update.message.text.lower()
-    if keyword not in group["keywords"]:
-        group["keywords"].append(keyword)
-        save_data()
-        await update.message.reply_text(f"✅ Keyword added: {keyword}")
-    else:
-        await update.message.reply_text("⚠️ This keyword already exists!")
-    return ConversationHandler.END
 
 async def start_remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fixed remove command with error handling"""
@@ -222,16 +198,6 @@ async def start_remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in start_remove: {e}")
         return ConversationHandler.END
 
-async def remove_keyword_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    group = get_group(update.effective_chat.id)
-    keyword = update.message.text.lower()
-    if keyword in group["keywords"]:
-        group["keywords"].remove(keyword)
-        save_data()
-        await update.message.reply_text(f"✅ Keyword removed: {keyword}")
-    else:
-        await update.message.reply_text("⚠️ This keyword does not exist!")
-    return ConversationHandler.END
 
 async def start_set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fixed set_delay command with error handling"""
@@ -247,16 +213,6 @@ async def start_set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in start_set_delay: {e}")
         return ConversationHandler.END
 
-async def set_delay_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    group = get_group(update.effective_chat.id)
-    try:
-        delay = int(update.message.text)
-        group["bot_delay"] = delay
-        save_data()
-        await update.message.reply_text(f"✅ Bot delay set to {delay} seconds")
-    except:
-        await update.message.reply_text("❌ Invalid number! Please send a valid number of seconds.")
-    return ConversationHandler.END
 
 async def list_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fixed list command with error handling"""
@@ -274,6 +230,7 @@ async def list_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in list_keywords: {e}")
 
+
 async def start_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fixed start_bot command with error handling"""
     try:
@@ -289,6 +246,7 @@ async def start_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in start_bot_cmd: {e}")
 
+
 async def stop_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fixed stop_bot command with error handling"""
     try:
@@ -303,6 +261,7 @@ async def stop_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔴 Bot is now stopped!")
     except Exception as e:
         print(f"Error in stop_bot_cmd: {e}")
+
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fixed status command with error handling"""
@@ -322,6 +281,60 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in status_cmd: {e}")
 
+# ================= STATES =================
+ADD_KEYWORD, REMOVE_KEYWORD, SET_DELAY = range(3)
+
+# ================= HELPERS =================
+def get_group(chat_id):
+    chat_id = str(chat_id)
+    if chat_id not in data:
+        data[chat_id] = {"keywords": [], "bot_active": False, "bot_delay": 5}
+        save_data()
+    group = data[chat_id]
+    if "keywords" not in group:
+        group["keywords"] = []
+    if "bot_active" not in group:
+        group["bot_active"] = False
+    if "bot_delay" not in group:
+        group["bot_delay"] = 5
+    return group
+
+# ================= ORIGINAL COMMANDS =================
+async def add_keyword_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    group = get_group(update.effective_chat.id)
+    keyword = update.message.text.lower()
+    if keyword not in group["keywords"]:
+        group["keywords"].append(keyword)
+        save_data()
+        await update.message.reply_text(f"✅ Keyword added: {keyword}")
+    else:
+        await update.message.reply_text("⚠️ This keyword already exists!")
+    return ConversationHandler.END
+
+
+async def remove_keyword_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    group = get_group(update.effective_chat.id)
+    keyword = update.message.text.lower()
+    if keyword in group["keywords"]:
+        group["keywords"].remove(keyword)
+        save_data()
+        await update.message.reply_text(f"✅ Keyword removed: {keyword}")
+    else:
+        await update.message.reply_text("⚠️ This keyword does not exist!")
+    return ConversationHandler.END
+
+
+async def set_delay_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    group = get_group(update.effective_chat.id)
+    try:
+        delay = int(update.message.text)
+        group["bot_delay"] = delay
+        save_data()
+        await update.message.reply_text(f"✅ Bot delay set to {delay} seconds")
+    except:
+        await update.message.reply_text("❌ Invalid number! Please send a valid number of seconds.")
+    return ConversationHandler.END
+
 # ================= BAN / UNBAN =================
 async def ban_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
@@ -334,6 +347,7 @@ async def ban_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del data[chat_id]
         save_data()
     await update.message.reply_text("🚫 এই গ্রুপটি ban করা হলো。")
+
 
 async def unban_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
@@ -388,6 +402,7 @@ async def leave_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del data[chat_id]
             save_data()
 
+
 async def start_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     if chat_id in banned_groups:
@@ -429,6 +444,7 @@ async def group_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     reply_markup = InlineKeyboardMarkup(kb) if kb else None
     await update.message.reply_text(info_text, reply_markup=reply_markup)
+
 
 async def list_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMINS:
@@ -520,6 +536,7 @@ async def group_info_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📩 দয়া করে গ্রুপ ID পাঠান যেটার তথ্য দেখতে চান:")
     return ASK_GROUP_ID
 
+
 async def group_info_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gid = update.message.text.strip()
     if not (gid.lstrip("-").isdigit()):
@@ -579,17 +596,61 @@ async def show_keywords_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     await query.edit_message_text(kw_text)
 
-# ================= BOT INIT =================
-def main():
-    # Check if BOT_TOKEN is set
-    if not BOT_TOKEN:
-        print("❌ ERROR: BOT_TOKEN environment variable is not set!")
-        print("💡 Render.com এ Environment Variables এ BOT_TOKEN set করুন")
-        print("💡 BOT_TOKEN: 8309261403:AAHHfLeAYdFLeYoNEL0mDmNyAUgW5b_S57w")
-        return
-    
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# ================= WEBHOOK ENDPOINTS =================
+@app.get("/")
+async def root():
+    return {
+        "status": "✅ Bot is running!", 
+        "message": "Telegram Keyword Bot with FastAPI + Webhook",
+        "webhook_url": WEBHOOK_URL
+    }
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Render"""
+    return {"status": "healthy", "bot": "running"}
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    """Telegram webhook endpoint"""
+    try:
+        data = await request.json()
+        update = Update.de_json(data, telegram_app.bot)
+        await telegram_app.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.on_event("startup")
+async def on_startup():
+    """Bot startup - set webhook"""
+    try:
+        await telegram_app.initialize()
+        await telegram_app.start()
+        
+        # Set webhook
+        webhook_url = f"{WEBHOOK_URL}/webhook"
+        await telegram_app.bot.set_webhook(webhook_url)
+        logger.info(f"✅ Webhook set to: {webhook_url}")
+        logger.info("🤖 Bot is now running on Render.com with FastAPI!")
+        
+    except Exception as e:
+        logger.error(f"❌ Startup error: {e}")
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    """Bot shutdown"""
+    try:
+        await telegram_app.stop()
+        await telegram_app.shutdown()
+        logger.info("🛑 Bot stopped successfully")
+    except Exception as e:
+        logger.error(f"❌ Shutdown error: {e}")
+
+# ================= BOT HANDLERS SETUP =================
+def setup_handlers():
+    """Setup all bot handlers"""
     # Conversation handlers
     add_conv = ConversationHandler(
         entry_points=[CommandHandler('add', start_add)],
@@ -613,36 +674,32 @@ def main():
         fallbacks=[],
     )
 
-    # Add handlers
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CallbackQueryHandler(verify_membership_callback, pattern="^verify_membership$"))
-    app.add_handler(CallbackQueryHandler(show_keywords_callback, pattern=r"^showkw_"))
-    app.add_handler(group_info_handler)
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("help_owner", help_owner))
-    app.add_handler(add_conv)
-    app.add_handler(remove_conv)
-    app.add_handler(delay_conv)
-    app.add_handler(CommandHandler("list", list_keywords))
-    app.add_handler(CommandHandler("start_bot", start_bot_cmd))
-    app.add_handler(CommandHandler("stop_bot", stop_bot_cmd))
-    app.add_handler(CommandHandler("status", status_cmd))
-    app.add_handler(CommandHandler("leave_group", leave_group))
-    app.add_handler(CommandHandler("start_group", start_group))
-    app.add_handler(CommandHandler("ban", ban_group))
-    app.add_handler(CommandHandler("unban", unban_group))
-    app.add_handler(CommandHandler("group_info", group_info))
-    app.add_handler(CommandHandler("groups", list_groups))
-    app.add_handler(CallbackQueryHandler(button_callback, pattern="startdel_|stopdel_|ban_|unban_"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
+    # Add all handlers
+    telegram_app.add_handler(CommandHandler("start", start_command))
+    telegram_app.add_handler(CallbackQueryHandler(verify_membership_callback, pattern="^verify_membership$"))
+    telegram_app.add_handler(CallbackQueryHandler(show_keywords_callback, pattern=r"^showkw_"))
+    telegram_app.add_handler(group_info_handler)
+    telegram_app.add_handler(CommandHandler("help", help_cmd))
+    telegram_app.add_handler(CommandHandler("help_owner", help_owner))
+    telegram_app.add_handler(add_conv)
+    telegram_app.add_handler(remove_conv)
+    telegram_app.add_handler(delay_conv)
+    telegram_app.add_handler(CommandHandler("list", list_keywords))
+    telegram_app.add_handler(CommandHandler("start_bot", start_bot_cmd))
+    telegram_app.add_handler(CommandHandler("stop_bot", stop_bot_cmd))
+    telegram_app.add_handler(CommandHandler("status", status_cmd))
+    telegram_app.add_handler(CommandHandler("leave_group", leave_group))
+    telegram_app.add_handler(CommandHandler("start_group", start_group))
+    telegram_app.add_handler(CommandHandler("ban", ban_group))
+    telegram_app.add_handler(CommandHandler("unban", unban_group))
+    telegram_app.add_handler(CommandHandler("group_info", group_info))
+    telegram_app.add_handler(CommandHandler("groups", list_groups))
+    telegram_app.add_handler(CallbackQueryHandler(button_callback, pattern="startdel_|stopdel_|ban_|unban_"))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
 
-    print("✅ Bot is starting on Render...")
-    print("🤖 Bot Features:")
-    print("   - Force Join System")
-    print("   - Keyword-based Message Delete")
-    print("   - Group Management")
-    print("   - Admin Controls")
-    app.run_polling()
+# Initialize handlers
+setup_handlers()
 
 if __name__ == "__main__":
-    main()
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
