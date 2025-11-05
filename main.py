@@ -70,7 +70,12 @@ def save_ban():
 app = FastAPI(title="Telegram Keyword Bot", description="FastAPI + Webhook Bot")
 
 # ================= TELEGRAM BOT SETUP =================
-telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+# Fixed application builder for python-telegram-bot v21.7
+telegram_app = (
+    ApplicationBuilder()
+    .token(BOT_TOKEN)
+    .build()
+)
 
 # ================= FORCE JOIN HELPERS =================
 async def is_member(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -703,3 +708,4 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
