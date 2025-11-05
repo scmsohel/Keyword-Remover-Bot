@@ -17,6 +17,7 @@ import os
 from fastapi import FastAPI, Request
 import uvicorn
 import logging
+import re
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -390,10 +391,7 @@ async def unban_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⚠️ এই গ্রুপ ban list এ নেই。")
 
-# ================= MESSAGE CHECK (Enhanced Invisible-safe + Template-safe) =================
-# এই ফাংশন এখন zero-width / invisible characters detect করতে পারবে
-# এবং IFTTT / Telegram notification style message detect ও delete করতে পারবে
-
+# ================= MESSAGE CHECK (Fully Robust) =================
 ZERO_WIDTH_CHARS = [
     "\u200B",  # Zero-width space
     "\u200C",  # Zero-width non-joiner
@@ -402,52 +400,56 @@ ZERO_WIDTH_CHARS = [
 ]
 
 def remove_invisible_chars(text):
-    """Remove all zero-width / invisible characters from text"""
+    """Remove all zero-width / invisible characters"""
     for char in ZERO_WIDTH_CHARS:
         text = text.replace(char, "")
     return text
 
 def normalize_message(text):
-    """Lowercase + remove invisible chars + remove template braces"""
+    """Lowercase + remove invisible chars + remove placeholders + remove HTML tags + normalize whitespace"""
     if not text:
         return ""
     text = text.lower()
     text = remove_invisible_chars(text)
-    # 🔹 Remove common template placeholders (like {{Something}})
-    import re
+    # remove {{...}} placeholders
     text = re.sub(r"\{\{.*?\}\}", "", text)
+    # remove HTML tags like <br>, <b>, <i>
+    text = re.sub(r"<.*?>", "", text)
+    # collapse multiple whitespaces into one
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     
-    # 🔹 Step 1: banned group ignore
     if chat_id in banned_groups:
         return
 
-    # 🔹 Step 2: bot off হলে ignore
     group = get_group(chat_id)
     if not group.get("bot_active", False):
         return
 
-    # 🔹 Step 3: message text normalize
-    msg_text = normalize_message(update.message.text if update.message.text else "")
+    msg_text = ""
+    if update.message.text:
+        msg_text += update.message.text
+    if update.message.caption:  # for photo/video with caption
+        msg_text += " " + update.message.caption
+    msg_text = normalize_message(msg_text)
 
     if not msg_text:
-        return  # empty after normalization
+        return  # nothing to check
 
-    # 🔹 Step 4: check against each keyword
     for kw in group.get("keywords", []):
         clean_kw = normalize_message(kw)
         if clean_kw in msg_text:
-            await asyncio.sleep(group.get("bot_delay", 5))  # delay
+            await asyncio.sleep(group.get("bot_delay", 5))
             try:
-                await update.message.delete()                # delete message
-                group["deleted_count"] += 1                 # update counter
-                save_data()                                 # save changes
+                await update.message.delete()
+                group["deleted_count"] += 1
+                save_data()
             except:
-                pass  # ignore delete errors
-            break  # একবার match হলে break
+                pass
+            break
 
 
 # ================= LEAVE / START GROUP =================
@@ -831,6 +833,7 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
