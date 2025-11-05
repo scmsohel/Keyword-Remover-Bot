@@ -267,26 +267,38 @@ async def stop_bot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in stop_bot_cmd: {e}")
 
+# ================= Groupe Status =================
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Fixed status command with error handling"""
+    """Stylish status command with interface"""
     try:
         chat_id = str(update.effective_chat.id)
         if chat_id in banned_groups:
             return await update.message.reply_text("❌ এই গ্রুপটি banned, কোনো command চলবে না।")
         if not await is_admin(update, context):
             return await update.message.reply_text("❌ এই কমান্ডটি শুধুমাত্র গ্রুপের অ্যাডমিনদের জন্য।")
+
         group = get_group(update.effective_chat.id)
+        status_emoji = "🟢" if group.get("bot_active", False) else "🔴"
+        status_text = "On" if group.get("bot_active", False) else "Off"
+        delay = group.get("bot_delay", 5)
         keywords_count = len(group.get("keywords", []))
-        deleted_count = group.get("deleted_count", 0)  # ✅ এখানে counter নেওয়া হলো
-        await update.message.reply_text(
-            f"Bot: {'On' if group.get('bot_active', False) else 'Off'}\n"
-            f"Delay sec: {group.get('bot_delay', 5)}\n"
-            f"Keywords: {keywords_count}\n"
-            f"Deleted messages: {deleted_count}"  # ✅ নতুন line
+        deleted_count = group.get("deleted_count", 0)
+
+        interface = (
+            "📊 Bot Status\n"
+            "━━━━━━━━━━━━━━━\n"
+            f"🤖 Status: {status_emoji} {status_text}\n"
+            f"⏱ Delay: {delay} sec\n"
+            f"🔑 Keywords: {keywords_count}\n"
+            f"🗑 Deleted messages: {deleted_count}\n"
+            "━━━━━━━━━━━━━━━"
         )
+
+        await update.message.reply_text(interface)
     except Exception as e:
         print(f"Error in status_cmd: {e}")
+
 
 # ================= STATES =================
 ADD_KEYWORD, REMOVE_KEYWORD, SET_DELAY = range(3)
@@ -440,45 +452,100 @@ async def start_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ বটটি এই গ্রুপে নেই। প্রথমে বটকে গ্রুপে add করুন。")
 
 # ================= BOT OWNER COMMANDS =================
+
 async def group_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """একটি নির্দিষ্ট গ্রুপের বিস্তারিত তথ্য দেখায়"""
     if update.effective_user.id not in ADMINS:
-        return await update.message.reply_text("❌ শুধুমাত্র bot owner দেখতে পারবেন。")
+        return await update.message.reply_text("❌ শুধুমাত্র bot owner দেখতে পারবেন।")
+
     if not context.args:
         return await update.message.reply_text("⚠️ Usage: /group_info <group_id>")
+
     gid = context.args[0]
     info_text = ""
+
+    # 🔹 Group name আনার চেষ্টা
+    try:
+        chat = await context.bot.get_chat(gid)
+        group_name = chat.title
+    except:
+        group_name = "(Unknown Group)"  # নাম না পেলে fallback
+
     if gid in banned_groups:
-        info_text += f"🚫 Group {gid} is BANNED\n"
+        info_text += f"🚫 Group: {group_name}\n🆔 ID: {gid}\nStatus: BANNED\n"
         kb = [[InlineKeyboardButton("Unban Group", callback_data=f"unban_{gid}")]]
     else:
         info = get_group(gid)
         status = "On" if info.get("bot_active", False) else "Off"
         delay = info.get("bot_delay", 5)
         keywords = "\n".join(info.get("keywords", [])) if info.get("keywords") else "No keywords"
-        info_text += f"Group ID: {gid}\nBot: {status}\nDelay: {delay}\nKeywords:\n{keywords}"
+        deleted_count = info.get("deleted_count", 0)  # ✅ নতুন লাইন: delete count দেখানো হবে
+
+        info_text += (
+            f"📊 Group: {group_name}\n"
+            f"🆔 ID: {gid}\n"
+            f"🤖 Bot: {status}\n"
+            f"⏱ Delay: {delay} sec\n"
+            f"📝 Keywords: {len(info.get('keywords', []))} keywords\n"
+            f"🗑 Deleted messages: {deleted_count}"
+        )
+
         kb = [
             [InlineKeyboardButton("Start Bot", callback_data=f"startdel_{gid}"),
              InlineKeyboardButton("Stop Bot", callback_data=f"stopdel_{gid}")],
             [InlineKeyboardButton("Ban Group", callback_data=f"ban_{gid}"),
-             InlineKeyboardButton("Unban Group", callback_data=f"unban_{gid}")]
+             InlineKeyboardButton("Unban Group", callback_data=f"unban_{gid}")],
+            [InlineKeyboardButton("📝 Show Keywords", callback_data=f"showkw_{gid}")]
         ]
+
     reply_markup = InlineKeyboardMarkup(kb) if kb else None
     await update.message.reply_text(info_text, reply_markup=reply_markup)
 
 
+# ================= /groups (list_groups) COMMAND =================
 async def list_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """সব গ্রুপের সারাংশ দেখায় (নামসহ)"""
     if update.effective_user.id not in ADMINS:
-        return await update.message.reply_text("❌ শুধুমাত্র bot owner দেখতে পারবেন。")
+        return await update.message.reply_text("❌ শুধুমাত্র bot owner দেখতে পারবেন।")
+
     if not data and not banned_groups:
-        return await update.message.reply_text("কোনো গ্রুপ পাওয়া যায়নি。")
-    text = "Groups:\n"
-    for gid in data:
-        info = get_group(gid)
-        deleted_count = info.get("deleted_count", 0)  # ✅ Added deleted message count
-        text += f"{gid} | Bot: {'On' if info.get('bot_active', False) else 'Off'} | Delay: {info.get('bot_delay', 5)}s | Keywords: {len(info.get('keywords', []))} | Deleted: {deleted_count}\n"
-    for gid in banned_groups:
-        text += f"{gid} | 🚫 BANNED\n"
-    await update.message.reply_text(text)
+        return await update.message.reply_text("কোনো গ্রুপ পাওয়া যায়নি।")
+
+    text = "📋 <b>Groups:</b>\n\n"
+
+    for gid, info in data.items():
+        # 🔹 Group name আনার চেষ্টা
+        try:
+            chat = await context.bot.get_chat(gid)
+            group_name = chat.title
+        except:
+            group_name = "(Unknown Group)"
+
+        bot_status = "On" if info.get("bot_active", False) else "Off"
+        delay = info.get("bot_delay", 5)
+        keywords = len(info.get("keywords", []))
+        deleted_count = info.get("deleted_count", 0)
+
+        text += (
+            f"📛 <b>{group_name}</b>\n"
+            f"🆔 <code>{gid}</code>\n"
+            f"🤖 Bot: {bot_status} | ⏱ Delay: {delay}s | "
+            f"🔑 Keywords: {keywords} | 🗑 Deleted: {deleted_count}\n\n"
+        )
+
+    # 🔹 Banned groups list (optional)
+    if banned_groups:
+        text += "\n🚫 <b>BANNED GROUPS:</b>\n"
+        for gid in banned_groups:
+            try:
+                chat = await context.bot.get_chat(gid)
+                group_name = chat.title
+            except:
+                group_name = "(Unknown Group)"
+            text += f"❌ {group_name} ({gid})\n"
+
+    await update.message.reply_text(text, parse_mode="HTML")
+
 
 # ================= HELP COMMAND =================
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -726,6 +793,7 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
