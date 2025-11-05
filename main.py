@@ -390,25 +390,44 @@ async def unban_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⚠️ এই গ্রুপ ban list এ নেই。")
 
-# ================= MESSAGE CHECK =================
+# ================= MESSAGE CHECK (Invisible-safe) =================
+# এই ফাংশন এখন zero-width / invisible characters detect করতে পারবে
+ZERO_WIDTH_CHARS = [
+    "\u200B",  # Zero-width space
+    "\u200C",  # Zero-width non-joiner
+    "\u200D",  # Zero-width joiner
+    "\uFEFF"   # Zero-width no-break space (BOM)
+]
+
+def remove_invisible_chars(text):
+    """Remove all zero-width/invisible characters from text"""
+    for char in ZERO_WIDTH_CHARS:
+        text = text.replace(char, "")
+    return text
+
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     if chat_id in banned_groups:
-        return
+        return  # banned group ignore
+
     group = get_group(chat_id)
     if not group.get("bot_active", False):
-        return
-    msg_text = update.message.text.lower()
+        return  # bot off হলে ignore
+
+    # message normalize: lowercase + invisible chars remove
+    msg_text = remove_invisible_chars(update.message.text.lower())
+
     for kw in group.get("keywords", []):
-        if kw in msg_text:
-            await asyncio.sleep(group.get("bot_delay", 5))
+        clean_kw = remove_invisible_chars(kw.lower())  # keyword clean করা
+        if clean_kw in msg_text:  # match হলে
+            await asyncio.sleep(group.get("bot_delay", 5))  # delay
             try:
-                await update.message.delete()
-                group["deleted_count"] += 1  # ✅ delete হলে counter বাড়ানো
-                save_data()  # ✅ পরিবর্তন save করা হচ্ছে
+                await update.message.delete()  # মেসেজ delete
+                group["deleted_count"] += 1   # counter update
+                save_data()                  # save change
             except:
-                pass  # Ignore delete errors
-            break
+                pass  # delete error ignore
+            break  # একবার match হলে break
 
 
 
@@ -793,6 +812,7 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
