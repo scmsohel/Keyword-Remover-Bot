@@ -288,9 +288,6 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in status_cmd: {e}")
 
-    )
-
-
 # ================= STATES =================
 ADD_KEYWORD, REMOVE_KEYWORD, SET_DELAY = range(3)
 
@@ -729,5 +726,6 @@ setup_handlers()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
